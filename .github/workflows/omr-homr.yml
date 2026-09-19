@@ -1,4 +1,4 @@
-name: OMR - HOMR
+name: OMR - HOMR + Verovio Overlay
 
 on:
   push:
@@ -18,71 +18,69 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install HOMR and MIDI tools
+      - name: Install OMR and render tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "homr==0.7.0" music21
+          python -m pip install "homr==0.7.0" music21 "verovio==6.3.0"
 
-      - name: Render PDF at 300 and 600 DPI
+      - name: Render PDF to PNG
         run: |
           set -e
           sudo apt-get update
           sudo apt-get install -y poppler-utils
-          mkdir -p work/300 work/600 output
+          mkdir -p work/300 output
 
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf" || { echo "PDF 없음"; exit 1; }
 
-          echo "=== 300 DPI ==="
+          cp "$pdf" output/original.pdf
           pdftoppm -png -r 300 "$pdf" work/300/page
 
-          echo "=== 600 DPI ==="
-          pdftoppm -png -r 600 "$pdf" work/600/page
-
-          ls -lh work/300 work/600
-
-      - name: Run HOMR at both resolutions
+      - name: Run HOMR
         run: |
           set -e
-
-          for dpi in 300 600; do
-            echo "=============================="
-            echo "=== HOMR ${dpi} DPI ==="
-            echo "=============================="
-
-            for img in work/${dpi}/page-*.png; do
-              echo "=== Processing $img ==="
-              python -m homr.main "$img"
-            done
+          for img in work/300/page-*.png; do
+            echo "=== Processing $img ==="
+            python -m homr.main "$img"
           done
 
-      - name: Post-process and create MIDI
+      - name: Post-process and MIDI
         run: |
           set -e
+          mkdir -p output/musicxml output/midi diagnostics
 
-          for dpi in 300 600; do
-            mkdir -p "output/${dpi}dpi"
+          for xml in work/300/*.musicxml; do
+            base=$(basename "$xml" .musicxml)
 
-            for xml in work/${dpi}/*.musicxml; do
-              base=$(basename "$xml" .musicxml)
+            python postprocess.py \
+              "$xml" \
+              "output/musicxml/${base}_fixed.musicxml" \
+              "diagnostics/${base}.txt"
 
-              python postprocess.py \
-                "$xml" \
-                "output/${dpi}dpi/${base}_fixed.musicxml" \
-                "output/${dpi}dpi/${base}_diagnostics.txt"
-
-              python -c "from music21 import converter; src='output/${dpi}dpi/${base}_fixed.musicxml'; out='output/${dpi}dpi/${base}.mid'; score=converter.parse(src); score.write('midi', fp=out); print('MIDI:', out)"
-            done
-
-            cp work/${dpi}/*_teaser.png "output/${dpi}dpi/" 2>/dev/null || true
+            python -c "from music21 import converter; s=converter.parse('output/musicxml/${base}_fixed.musicxml'); s.write('midi', fp='output/midi/${base}.mid')"
           done
 
-          echo "=== FINAL COMPARISON OUTPUT ==="
-          find output -type f -printf '%p %s bytes\n' | sort
+      - name: Render MusicXML to SVG with Verovio
+        run: |
+          set -e
+          mkdir -p output/svg
 
-      - name: Upload 300 vs 600 comparison
+          for xml in output/musicxml/*_fixed.musicxml; do
+            echo "=== Verovio: $xml ==="
+            python render_verovio.py "$xml" output/svg
+          done
+
+          ls -lh output/svg
+
+      - name: Build overlay viewer
+        run: |
+          cp overlay.html output/overlay.html
+
+      - name: Upload final overlay bundle
         uses: actions/upload-artifact@v4
         with:
-          name: OMR-300-vs-600
-          path: output/
+          name: OMR-Overlay-Viewer
+          path: |
+            output/
+            diagnostics/
           if-no-files-found: error

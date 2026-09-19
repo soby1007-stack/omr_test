@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OMR PDF ↔ MusicXML Overlay</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font-family:system-ui,sans-serif}
+header{position:sticky;top:0;z-index:10;background:#1c1c1c;border-bottom:1px solid #444;padding:10px}
+h1{font-size:17px;margin:0 0 8px}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+button,label{background:#2b2b2b;color:#eee;border:1px solid #555;border-radius:7px;padding:7px 10px;font-size:13px}
+input[type=file]{display:none}.ctrl{font-size:12px;display:flex;gap:5px;align-items:center}input[type=range]{width:100px}
+#status{font-size:12px;color:#bbb;margin-top:7px}.warn{color:#ffcf66}.ok{color:#9fe39f}
+main{padding:10px;overflow:auto}.stage{position:relative;margin:auto;background:#222;box-shadow:0 0 0 1px #444}
+#pdfCanvas{position:absolute;left:0;top:0;transform-origin:0 0}
+#svgLayer{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none}
+#svgLayer svg{display:block}
+</style>
+</head>
+<body>
+<header>
+<h1>🎼 OMR PDF ↔ MusicXML Overlay</h1>
+<div class="row">
+<label>📄 PDF<input id="pdf" type="file" accept=".pdf,application/pdf"></label>
+<label>🎵 SVG(Verovio) 선택<input id="svgs" type="file" accept=".svg,image/svg+xml" multiple></label>
+<button id="prev">◀</button><span id="page">페이지 -/-</span><button id="next">▶</button>
+<button id="reset">초기화</button>
+</div>
+<div class="row" style="margin-top:7px">
+<span class="ctrl">PDF <input id="ps" type="range" min="30" max="150" value="100"><b id="psv">100%</b></span>
+<span class="ctrl">SVG X <input id="sx" type="range" min="30" max="150" value="100"><b id="sxv">100%</b></span>
+<span class="ctrl">SVG Y <input id="sy" type="range" min="30" max="150" value="100"><b id="syv">100%</b></span>
+<span class="ctrl">X <input id="tx" type="range" min="-500" max="500" value="0"><b id="txv">0</b></span>
+<span class="ctrl">Y <input id="ty" type="range" min="-500" max="500" value="0"><b id="tyv">0</b></span>
+<span class="ctrl">투명도 <input id="op" type="range" min="0" max="100" value="45"><b id="opv">45%</b></span>
+</div>
+<div id="status">PDF와 Verovio SVG를 선택하세요.</div>
+</header>
+<main><div id="stage"></div></main>
+
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+let pdfDoc=null, svgPages=[], pageNo=1;
+const $=id=>document.getElementById(id);
+const stage=$("stage");
+
+function vals(){
+  for(const [id,suf] of [["ps","%"],["sx","%"],["sy","%"],["tx",""],["ty",""],["op","%"]])
+    $(id+"v").textContent=$(id).value+suf;
+}
+function apply(){
+  vals();
+  const c=$("pdfCanvas"), s=$("svgLayer");
+  if(c)c.style.transform=`scale(${$("ps").value/100})`;
+  if(s){
+    s.style.opacity=$("op").value/100;
+    s.style.transform=`translate(${$("tx").value}px,${$("ty").value}px) scale(${$("sx").value/100},${$("sy").value/100})`;
+  }
+}
+["ps","sx","sy","tx","ty","op"].forEach(x=>$(x).addEventListener("input",apply));
+
+async function draw(){
+  if(!pdfDoc)return;
+  const page=await pdfDoc.getPage(pageNo);
+  const vp=page.getViewport({scale:1.5});
+  stage.style.width=vp.width+"px"; stage.style.height=vp.height+"px"; stage.innerHTML="";
+
+  const c=document.createElement("canvas"); c.id="pdfCanvas";
+  c.width=Math.ceil(vp.width);c.height=Math.ceil(vp.height);
+  c.style.width=vp.width+"px";c.style.height=vp.height+"px";stage.appendChild(c);
+  await page.render({canvasContext:c.getContext("2d"),viewport:vp}).promise;
+
+  const layer=document.createElement("div");layer.id="svgLayer";stage.appendChild(layer);
+  const src=svgPages[pageNo-1];
+  if(src){
+    layer.innerHTML=src;
+    const svg=layer.querySelector("svg");
+    if(svg){
+      svg.style.width=vp.width+"px";svg.style.height=vp.height+"px";
+      svg.setAttribute("width",vp.width);svg.setAttribute("height",vp.height);
+    }
+    $("status").textContent="PDF + Verovio SVG 표시 완료";
+    $("status").className="ok";
+  }else{
+    $("status").textContent="이 페이지의 SVG가 없습니다.";
+    $("status").className="warn";
+  }
+  $("page").textContent=`페이지 ${pageNo}/${pdfDoc.numPages}`;
+  apply();
+}
+
+$("pdf").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  $("status").textContent="PDF 읽는 중...";
+  try{pdfDoc=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;pageNo=1;await draw()}
+  catch(err){$("status").textContent="PDF 오류: "+err.message;$("status").className="warn"}
+};
+
+$("svgs").onchange=async e=>{
+  const files=[...e.target.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  svgPages=await Promise.all(files.map(f=>f.text()));
+  $("status").textContent=`SVG ${svgPages.length}페이지 준비 완료`;
+  $("status").className="ok";
+  if(pdfDoc)await draw();
+};
+$("prev").onclick=async()=>{if(pdfDoc&&pageNo>1){pageNo--;await draw()}};
+$("next").onclick=async()=>{if(pdfDoc&&pageNo<pdfDoc.numPages){pageNo++;await draw()}};
+$("reset").onclick=()=>{$("ps").value=100;$("sx").value=100;$("sy").value=100;$("tx").value=0;$("ty").value=0;$("op").value=45;apply()};
+vals();
+</script>
+</body></html>
