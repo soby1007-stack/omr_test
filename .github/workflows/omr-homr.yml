@@ -23,25 +23,39 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "homr==0.7.0"
 
-      - name: Run OMR
+      - name: Render PDF to PNG
         run: |
-          mkdir -p output
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          mkdir -p work output
+
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf" || { echo "PDF 없음"; exit 1; }
 
-          echo "=== Processing ==="
+          echo "=== PDF ==="
           echo "$pdf"
 
-          python -c 'import sys; from homr.main import main; sys.argv=["homer", sys.argv[1]]; main()' "$pdf"
+          pdftoppm -png -r 300 "$pdf" work/page
 
-          find . -type f \
-            \( -name '*.musicxml' -o -name '*_teaser.png' \) \
-            -print
+          echo "=== Rendered pages ==="
+          ls -lh work/
 
-          find . -type f -name '*.musicxml' \
-            -not -path './output/*' \
-            -exec cp {} output/ \;
+      - name: Run HOMR
+        run: |
+          set -e
 
+          for img in work/page-*.png; do
+            echo "=== Processing $img ==="
+            python -m homr.main "$img"
+          done
+
+          echo "=== Generated MusicXML ==="
+          find work -type f -name '*.musicxml' -print
+
+          find work -type f -name '*.musicxml' -exec cp {} output/ \;
+          find work -type f -name '*_teaser.png' -exec cp {} output/ \;
+
+          echo "=== Output ==="
           ls -lh output
 
       - name: Upload result
