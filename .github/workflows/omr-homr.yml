@@ -57,6 +57,122 @@ jobs:
           echo "=== Attention/debug files ==="
           find output/attention -type f -printf '%f %k KB\n' | sort
 
+      - name: Run Audiveris
+        continue-on-error: true
+        run: |
+          set -e
+          mkdir -p output/audiveris
+
+          wget -q \
+            https://github.com/Audiveris/audiveris/releases/download/5.11.0/Audiveris-5.11.0-ubuntu24.04-x86_64.deb \
+            -O /tmp/audiveris.deb
+
+          sudo apt-get update
+          sudo apt-get install -y /tmp/audiveris.deb
+
+          pdf=$(find input -type f -iname '*.pdf' | head -n 1)
+          test -n "$pdf"
+
+          /opt/audiveris/bin/Audiveris \
+            -batch \
+            -transcribe \
+            -export \
+            -output output/audiveris \
+            "$pdf"
+
+          find output/audiveris -type f -maxdepth 2 -print
+
+      - name: Run SMT++ full-page OMR
+        continue-on-error: true
+        run: |
+          set -e
+          mkdir -p output/smt
+
+          wget -q \
+            https://github.com/CrispStrobe/CrispEmbed/releases/download/v0.17.11/crispembed-linux-x86_64.tar.gz \
+            -O /tmp/crispembed.tar.gz
+
+          mkdir -p /tmp/crispembed
+          tar -xzf /tmp/crispembed.tar.gz -C /tmp/crispembed
+
+          CRISP=$(find /tmp/crispembed -type f -name crispembed | head -n 1)
+          test -n "$CRISP"
+          chmod +x "$CRISP"
+
+          for img in work/300/page-*.png; do
+            base=$(basename "$img" .png)
+
+            echo "=== SMT++ $img ==="
+
+            "$CRISP" \
+              -m smt-fp \
+              --ocr "$img" \
+              > "output/smt/${base}.krn"
+
+            test -s "output/smt/${base}.krn"
+
+            python -c "
+from music21 import converter
+src='output/smt/${base}.krn'
+dst='output/smt/${base}.musicxml'
+s=converter.parse(src, format='kern')
+s.write('musicxml', fp=dst)
+print(dst)
+"
+          done
+
+      - name: Compare OMR engines
+        run: |
+          set -e
+          mkdir -p output/comparison
+
+          python - <<'PY2'
+from pathlib import Path
+import json
+import xml.etree.ElementTree as ET
+
+def xml_notes(path):
+    try:
+        root=ET.parse(path).getroot()
+        notes=[]
+        for n in root.iter('note'):
+            pitch=n.find('pitch')
+            dur=n.find('duration')
+            if pitch is None:
+                continue
+            notes.append((
+                pitch.findtext('step'),
+                pitch.findtext('alter'),
+                pitch.findtext('octave'),
+                dur.text if dur is not None else None
+            ))
+        return notes
+    except Exception:
+        return []
+
+out=Path("output/comparison")
+report={}
+
+for engine, files in {
+    "homr": sorted(Path("output/musicxml").glob("*_fixed.musicxml")),
+    "audiveris": sorted(Path("output/audiveris").glob("*.mxl")),
+    "smt": sorted(Path("output/smt").glob("*.musicxml")),
+}.items():
+    report[engine]=[]
+    for f in files:
+        report[engine].append({
+            "file":str(f),
+            "notes":len(xml_notes(f))
+        })
+
+(out/"engine_summary.json").write_text(
+    json.dumps(report,ensure_ascii=False,indent=2),
+    encoding="utf-8"
+)
+
+print(json.dumps(report,ensure_ascii=False,indent=2))
+PY2
+
       - name: Post-process and MIDI
         run: |
           set -e
