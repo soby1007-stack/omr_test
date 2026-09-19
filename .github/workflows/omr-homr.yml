@@ -1,6 +1,8 @@
 name: OMR - HOMR
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
