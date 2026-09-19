@@ -23,50 +23,66 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "homr==0.7.0" music21
 
-      - name: Render PDF to PNG
+      - name: Render PDF at 300 and 600 DPI
         run: |
+          set -e
           sudo apt-get update
           sudo apt-get install -y poppler-utils
-          mkdir -p work output
+          mkdir -p work/300 work/600 output
 
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf" || { echo "PDF 없음"; exit 1; }
 
-          pdftoppm -png -r 300 "$pdf" work/page
+          echo "=== 300 DPI ==="
+          pdftoppm -png -r 300 "$pdf" work/300/page
 
-      - name: Run HOMR
+          echo "=== 600 DPI ==="
+          pdftoppm -png -r 600 "$pdf" work/600/page
+
+          ls -lh work/300 work/600
+
+      - name: Run HOMR at both resolutions
         run: |
           set -e
 
-          for img in work/page-*.png; do
-            echo "=== Processing $img ==="
-            python -m homr.main "$img"
+          for dpi in 300 600; do
+            echo "=============================="
+            echo "=== HOMR ${dpi} DPI ==="
+            echo "=============================="
+
+            for img in work/${dpi}/page-*.png; do
+              echo "=== Processing $img ==="
+              python -m homr.main "$img"
+            done
           done
 
-      - name: Post-process MusicXML
+      - name: Post-process and create MIDI
         run: |
           set -e
-          mkdir -p output
 
-          for xml in work/*.musicxml; do
-            base=$(basename "$xml" .musicxml)
+          for dpi in 300 600; do
+            mkdir -p "output/${dpi}dpi"
 
-            python postprocess.py \
-              "$xml" \
-              "output/${base}_fixed.musicxml" \
-              "output/${base}_diagnostics.txt"
+            for xml in work/${dpi}/*.musicxml; do
+              base=$(basename "$xml" .musicxml)
 
-            python -c "from music21 import converter; src='output/${base}_fixed.musicxml'; out='output/${base}.mid'; score=converter.parse(src); score.write('midi', fp=out); print('MIDI:', out)"
+              python postprocess.py \
+                "$xml" \
+                "output/${dpi}dpi/${base}_fixed.musicxml" \
+                "output/${dpi}dpi/${base}_diagnostics.txt"
+
+              python -c "from music21 import converter; src='output/${dpi}dpi/${base}_fixed.musicxml'; out='output/${dpi}dpi/${base}.mid'; score=converter.parse(src); score.write('midi', fp=out); print('MIDI:', out)"
+            done
+
+            cp work/${dpi}/*_teaser.png "output/${dpi}dpi/" 2>/dev/null || true
           done
 
-          cp work/*_teaser.png output/ 2>/dev/null || true
+          echo "=== FINAL COMPARISON OUTPUT ==="
+          find output -type f -printf '%p %s bytes\n' | sort
 
-          echo "=== FINAL OUTPUT ==="
-          ls -lh output
-
-      - name: Upload result
+      - name: Upload 300 vs 600 comparison
         uses: actions/upload-artifact@v4
         with:
-          name: OMR-Final
+          name: OMR-300-vs-600
           path: output/
           if-no-files-found: error
