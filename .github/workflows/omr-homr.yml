@@ -152,6 +152,13 @@ jobs:
           print(json.dumps(report, ensure_ascii=False, indent=2))
           PY2
 
+      - name: Compare HOMR and Audiveris (measure level)
+        run: |
+          set -e
+          mkdir -p output/comparison
+          python omr_compare.py output/comparison/omr_compare.json
+          cat output/comparison/omr_compare.json
+
       - name: Render each MusicXML separately with Verovio
         run: |
           set -e
