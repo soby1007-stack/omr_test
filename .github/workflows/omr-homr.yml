@@ -28,8 +28,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y poppler-utils
 
-      - name: Install Poppler
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Render PDF and detect original layout
         run: |
           set -e
@@ -47,8 +45,21 @@ jobs:
           set -e
           for img in work/300/page-*.png; do
             echo "=== Processing $img ==="
-            python -m homr.main "$img"
+            python -m homr.main --debug "$img"
           done
+
+
+      - name: Collect HOMR attention/debug images
+        run: |
+          set -e
+          mkdir -p output/attention
+          find work/300 -maxdepth 1 -type f \( \\
+            -name '*_staff-*_output.jpg' -o \\
+            -name '*_staff-*_debug_annotated.jpg' -o \\
+            -name '*_debug_*.png' \\
+          \) -print -exec cp {} output/attention/ \;
+          echo "=== Attention/debug files ==="
+          find output/attention -type f -printf '%f %k KB\\n' | sort
 
       - name: Post-process and MIDI
         run: |
