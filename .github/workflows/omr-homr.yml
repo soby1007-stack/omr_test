@@ -87,65 +87,10 @@ jobs:
 
           find output/audiveris -type f -print
 
-      - name: Run SMT++ full-page OMR
-        continue-on-error: true
+      - name: SMT++ status
         run: |
-          set -e
-          mkdir -p output/smt /tmp/crispembed /tmp/crispnotation
-
-          wget -q \
-            https://github.com/CrispStrobe/CrispEmbed/releases/download/v0.17.11/crispembed-linux-x86_64.tar.gz \
-            -O /tmp/crispembed.tar.gz
-
-          tar -xzf /tmp/crispembed.tar.gz -C /tmp/crispembed
-
-          CRISP=$(find /tmp/crispembed -type f -name crispembed | head -n 1)
-          LIB=$(find /tmp/crispembed -type f -name 'libcrispembed.so*' | head -n 1)
-
-          test -n "$CRISP"
-          test -n "$LIB"
-
-          chmod +x "$CRISP"
-
-          # crisp_notation CLI 설치
-          python -m pip install dart-lang 2>/dev/null || true
-
-          git clone --depth 1 \
-            https://github.com/CrispStrobe/crisp_notation.git \
-            /tmp/crispnotation
-
-          if command -v dart >/dev/null 2>&1; then
-            cd /tmp/crispnotation
-            dart pub get
-            dart pub global activate --source path packages/crisp_notation_cli
-            cd -
-
-            CRISP_NOTATION=$(find "$HOME/.pub-cache/bin" -maxdepth 1 -type f -name crisp_notation | head -n 1)
-
-            if [ -n "$CRISP_NOTATION" ]; then
-              export CRISPEMBED_LIB="$LIB"
-
-              for img in work/300/page-*.png; do
-                base=$(basename "$img" .png)
-
-                echo "=== SMT++ -> MusicXML $img ==="
-
-                "$CRISP_NOTATION" omr \
-                  "$img" \
-                  "output/smt/${base}.musicxml" \
-                  --model smt-fp \
-                  --lib "$LIB"
-
-                test -s "output/smt/${base}.musicxml"
-              done
-            else
-              echo "crisp_notation CLI binary not found"
-              exit 1
-            fi
-          else
-            echo "Dart SDK unavailable"
-            exit 1
-          fi
+          echo "SMT++ is intentionally disabled for this run."
+          echo "CrispEmbed inference was previously verified; MusicXML export path is not yet verified."
 
       - name: Post-process and MIDI
         run: |
@@ -163,12 +108,49 @@ jobs:
             python -c "from music21 import converter; s=converter.parse('output/musicxml/${base}_fixed.musicxml'); s.write('midi', fp='output/midi/${base}.mid')"
           done
 
-      - name: Compare OMR engines
+      - name: Compare HOMR and Audiveris
         run: |
           set -e
           mkdir -p output/comparison
 
-          python -c 'import json,xml.etree.ElementTree as ET; from pathlib import Path; sources={"homr":sorted(Path("output/musicxml").glob("*_fixed.musicxml")),"audiveris":sorted(Path("output/audiveris").glob("*.mxl")),"smt":sorted(Path("output/smt").glob("*.musicxml"))}; report={k:[{"file":str(f),"notes":sum(1 for n in ET.parse(f).getroot().iter("note") if n.find("pitch") is not None)} for f in v] for k,v in sources.items()}; Path("output/comparison/engine_summary.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)); print(json.dumps(report,ensure_ascii=False,indent=2))'
+          python - <<'PY2'
+          from pathlib import Path
+          import json
+          from music21 import converter
+
+          def inspect(path):
+              score = converter.parse(str(path))
+              notes = list(score.recurse().notes)
+              pitches = [str(n.pitch) for n in notes if hasattr(n, "pitch")]
+              return {
+                  "file": str(path),
+                  "notes": len(notes),
+                  "pitched_notes": len(pitches),
+                  "first_pitches": pitches[:20],
+              }
+
+          report = {
+              "homr": [
+                  inspect(p)
+                  for p in sorted(
+                      Path("output/musicxml").glob("*_fixed.musicxml")
+                  )
+              ],
+              "audiveris": [
+                  inspect(p)
+                  for p in sorted(
+                      Path("output/audiveris").glob("*.mxl")
+                  )
+              ],
+          }
+
+          Path("output/comparison/engine_summary.json").write_text(
+              json.dumps(report, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY2
 
       - name: Render each MusicXML separately with Verovio
         run: |
