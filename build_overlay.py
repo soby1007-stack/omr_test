@@ -11,7 +11,7 @@ for i,p in enumerate(layout["pages"],1):
     d=work/f"svg-source-{i}"
     for f in sorted(d.glob("page-*.svg"),key=lambda x:int(re.search(r"page-(\d+)",x.name).group(1))):
         svgs.append(f.read_text(encoding="utf-8"))
-    pages.append({"image":"data:image/png;base64,"+b64(work / "pdf" / f"pdf-page-{i}.png"),
+    pages.append({"image":"data:image/png;base64,"+b64(work / "300" / f"page-{i}.png"),
                   "svgs":svgs,"measures":p["measures"],"w":p["width"],"h":p["height"]})
 
 DATA=json.dumps(pages,ensure_ascii=False,separators=(",",":"))
