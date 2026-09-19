@@ -61,58 +61,91 @@ jobs:
         continue-on-error: true
         run: |
           set -e
-          mkdir -p output/audiveris
+          mkdir -p output/audiveris /tmp/audiveris-root
 
           wget -q \
             https://github.com/Audiveris/audiveris/releases/download/5.11.0/Audiveris-5.11.0-ubuntu24.04-x86_64.deb \
             -O /tmp/audiveris.deb
 
-          sudo apt-get update
-          sudo apt-get install -y /tmp/audiveris.deb
+          rm -rf /tmp/audiveris-root
+          dpkg-deb -x /tmp/audiveris.deb /tmp/audiveris-root
+
+          AUDIVERIS=/tmp/audiveris-root/opt/audiveris/bin/Audiveris
+          test -x "$AUDIVERIS"
+
+          "$AUDIVERIS" -version
 
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf"
 
-          /opt/audiveris/bin/Audiveris \
+          "$AUDIVERIS" \
             -batch \
             -transcribe \
             -export \
             -output output/audiveris \
             "$pdf"
 
-          find output/audiveris -type f -maxdepth 2 -print
+          find output/audiveris -type f -print
 
       - name: Run SMT++ full-page OMR
         continue-on-error: true
         run: |
           set -e
-          mkdir -p output/smt
+          mkdir -p output/smt /tmp/crispembed /tmp/crispnotation
 
           wget -q \
             https://github.com/CrispStrobe/CrispEmbed/releases/download/v0.17.11/crispembed-linux-x86_64.tar.gz \
             -O /tmp/crispembed.tar.gz
 
-          mkdir -p /tmp/crispembed
           tar -xzf /tmp/crispembed.tar.gz -C /tmp/crispembed
 
           CRISP=$(find /tmp/crispembed -type f -name crispembed | head -n 1)
+          LIB=$(find /tmp/crispembed -type f -name 'libcrispembed.so*' | head -n 1)
+
           test -n "$CRISP"
+          test -n "$LIB"
+
           chmod +x "$CRISP"
 
-          for img in work/300/page-*.png; do
-            base=$(basename "$img" .png)
+          # crisp_notation CLI 설치
+          python -m pip install dart-lang 2>/dev/null || true
 
-            echo "=== SMT++ $img ==="
+          git clone --depth 1 \
+            https://github.com/CrispStrobe/crisp_notation.git \
+            /tmp/crispnotation
 
-            "$CRISP" \
-              -m smt-fp \
-              --ocr "$img" \
-              > "output/smt/${base}.krn"
+          if command -v dart >/dev/null 2>&1; then
+            cd /tmp/crispnotation
+            dart pub get
+            dart pub global activate --source path packages/crisp_notation_cli
+            cd -
 
-            test -s "output/smt/${base}.krn"
+            CRISP_NOTATION=$(find "$HOME/.pub-cache/bin" -maxdepth 1 -type f -name crisp_notation | head -n 1)
 
-            python -c "from music21 import converter; src='output/smt/${base}.krn'; dst='output/smt/${base}.musicxml'; s=converter.parse(src, format='kern'); s.write('musicxml', fp=dst); print(dst)"
-          done
+            if [ -n "$CRISP_NOTATION" ]; then
+              export CRISPEMBED_LIB="$LIB"
+
+              for img in work/300/page-*.png; do
+                base=$(basename "$img" .png)
+
+                echo "=== SMT++ -> MusicXML $img ==="
+
+                "$CRISP_NOTATION" omr \
+                  "$img" \
+                  "output/smt/${base}.musicxml" \
+                  --model smt-fp \
+                  --lib "$LIB"
+
+                test -s "output/smt/${base}.musicxml"
+              done
+            else
+              echo "crisp_notation CLI binary not found"
+              exit 1
+            fi
+          else
+            echo "Dart SDK unavailable"
+            exit 1
+          fi
 
       - name: Post-process and MIDI
         run: |
