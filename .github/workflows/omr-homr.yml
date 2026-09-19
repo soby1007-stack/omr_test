@@ -1,4 +1,4 @@
-name: OMR - HOMR + Verovio Overlay
+name: OMR - HOMR + Measure Overlay
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 jobs:
   omr:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,23 +17,23 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install OMR and render tools
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "homr==0.7.0" music21 "verovio==6.3.0"
-
-      - name: Render PDF to PNG
+      - name: Install OMR and validation tools
         run: |
           set -e
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
-          mkdir -p work/300 output
+          python -m pip install --upgrade pip
+          python -m pip install "homr==0.7.0" music21 "verovio==6.3.0" pymupdf opencv-python-headless
 
+      - name: Render PDF and detect original layout
+        run: |
+          set -e
+          mkdir -p work/300 work/pdf output
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf" || { echo "PDF 없음"; exit 1; }
-
           cp "$pdf" output/original.pdf
           pdftoppm -png -r 300 "$pdf" work/300/page
+          pdftoppm -png -r 144 "$pdf" work/pdf/page
+          python detect_pdf_layout.py "$pdf" work/layout.json
+          cat work/layout.json
 
       - name: Run HOMR
         run: |
@@ -48,38 +47,41 @@ jobs:
         run: |
           set -e
           mkdir -p output/musicxml output/midi diagnostics
-
           for xml in work/300/*.musicxml; do
             base=$(basename "$xml" .musicxml)
-
             python postprocess.py \
               "$xml" \
               "output/musicxml/${base}_fixed.musicxml" \
               "diagnostics/${base}.txt"
-
             python -c "from music21 import converter; s=converter.parse('output/musicxml/${base}_fixed.musicxml'); s.write('midi', fp='output/midi/${base}.mid')"
           done
 
-      - name: Render MusicXML to SVG with Verovio
+      - name: Render each MusicXML separately with Verovio
         run: |
           set -e
-          mkdir -p output/svg
-
-          for xml in output/musicxml/*_fixed.musicxml; do
-            echo "=== Verovio: $xml ==="
-            python render_verovio.py "$xml" output/svg
+          for xml in output/musicxml/page-*_fixed.musicxml; do
+            base=$(basename "$xml" _fixed.musicxml)
+            page_no=${base#page-}
+            out="work/svg-source-${page_no}"
+            rm -rf "$out"
+            mkdir -p "$out"
+            echo "=== Verovio: $xml -> $out ==="
+            python render_verovio.py "$xml" "$out"
+            find "$out" -type f -name '*.svg' -print
           done
 
-          ls -lh output/svg
-
-      - name: Build overlay viewer
+      - name: Build automatic measure-level viewer
         run: |
-          cp overlay.html output/overlay.html
+          set -e
+          python build_overlay.py work/layout.json work output/OMR_measure_overlay.html
+          cp work/layout.json output/layout.json
+          cp work/pdf/page-*.png output/
+          cp -r work/svg-source-* output/
 
-      - name: Upload final overlay bundle
+      - name: Upload final result
         uses: actions/upload-artifact@v4
         with:
-          name: OMR-Overlay-Viewer
+          name: OMR-Measure-Overlay
           path: |
             output/
             diagnostics/

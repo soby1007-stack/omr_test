@@ -1,0 +1,57 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OMR 마디 단위 검증기</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font-family:system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:#1b1b1b;border-bottom:1px solid #444;padding:10px}
+h1{font-size:17px;margin:0 0 7px}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+button{background:#292929;color:#eee;border:1px solid #555;border-radius:7px;padding:7px 10px;font-size:13px}
+.ctrl{font-size:12px;display:flex;gap:4px;align-items:center}input{width:95px}
+#status{font-size:12px;color:#bbb;margin-top:7px}.ok{color:#9fe39f}.warn{color:#ffcf66}
+main{padding:10px;overflow:auto}#frame{position:relative;margin:auto;background:#222}
+#pdf{position:absolute;left:0;top:0;width:100%;height:100%}#ov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
+.measureBox{position:absolute;border:1px solid transparent;cursor:pointer}.selected{border-color:#4af!important}
+#tag{position:absolute;background:#000d;color:#fff;padding:3px 5px;border-radius:4px;font-size:11px;display:none;pointer-events:none}
+</style></head><body><header>
+<h1>🎼 PDF ↔ HOMR — 마디 단위 1:1 검증</h1>
+<div class="row"><button id="prev">◀</button><b id="page">1 / 2</b><button id="next">▶</button>
+<button id="toggle">SVG 숨김</button><button id="auto">자동정렬</button></div>
+<div class="row" style="margin-top:6px"><span class="ctrl">투명도 <input id="op" type="range" min="0" max="100" value="45"><b id="opv">45%</b></span>
+<span class="ctrl">전체 X <input id="gx" type="range" min="-100" max="100" value="0"><b id="gxv">0</b></span>
+<span class="ctrl">전체 Y <input id="gy" type="range" min="-100" max="100" value="0"><b id="gyv">0</b></span></div>
+<div id="status">원본 PDF를 기준으로 각 마디를 대응합니다.</div></header>
+<main><div id="frame"><img id="pdf"><svg id="ov"></svg><div id="tag"></div></div></main>
+<script>
+/*__DATA__*/
+let pi=0,visible=true;const $=x=>document.getElementById(x);
+function status(t,c=''){$('status').textContent=t;$('status').className=c}
+function parse(s){return new DOMParser().parseFromString(s,'image/svg+xml').documentElement}
+function apply(){ $('opv').textContent=$('op').value+'%';$('gxv').textContent=$('gx').value;$('gyv').textContent=$('gy').value;$('ov').style.opacity=$('op').value/100}
+function draw(){
+ const P=DATA[pi];$('page').textContent=(pi+1)+' / '+DATA.length;$('pdf').src=P.image;
+ $('frame').style.width=P.w+'px';$('frame').style.height=P.h+'px';$('ov').innerHTML='';
+ document.querySelectorAll('.measureBox').forEach(x=>x.remove());$('tag').style.display='none';
+ if(!visible){status('원본 PDF만 표시');return}
+ const srcMeasures=[];
+ for(const txt of P.svgs){const src=parse(txt);for(const m of src.querySelectorAll('.measure'))srcMeasures.push({m,src})}
+ if(srcMeasures.length!==P.measures.length){status(`⚠ PDF ${P.measures.length}마디 / SVG ${srcMeasures.length}마디 — 대응 불가`,'warn');return}
+ const work=document.createElement('div');work.style.cssText='position:absolute;left:-100000px;top:0;visibility:hidden';document.body.appendChild(work);
+ for(let i=0;i<srcMeasures.length;i++){
+   const item=srcMeasures[i],src=item.src,m=item.m,t=P.measures[i];
+   const probe=document.createElementNS('http://www.w3.org/2000/svg','svg');
+   const sw=parseFloat(src.getAttribute('width'))||840,sh=parseFloat(src.getAttribute('height'))||1030;
+   probe.setAttribute('width',sw);probe.setAttribute('height',sh);probe.setAttribute('viewBox',`0 0 ${sw} ${sh}`);
+   const defs=src.querySelector('defs');if(defs)probe.appendChild(defs.cloneNode(true));probe.appendChild(m.cloneNode(true));work.appendChild(probe);
+   const b=probe.lastElementChild.getBBox(),sx=t.w/b.width,sy=t.h/b.height;
+   const nested=document.createElementNS('http://www.w3.org/2000/svg','svg');
+   nested.setAttribute('x',0);nested.setAttribute('y',0);nested.setAttribute('width',P.w);nested.setAttribute('height',P.h);nested.setAttribute('viewBox',`0 0 ${P.w} ${P.h}`);
+   if(defs)nested.appendChild(defs.cloneNode(true));
+   const g=document.createElementNS('http://www.w3.org/2000/svg','g'),cl=m.cloneNode(true);
+   cl.setAttribute('transform',`translate(${t.x-b.x*sx+Number($('gx').value)},${t.y-b.y*sy+Number($('gy').value)}) scale(${sx},${sy})`);
+   g.appendChild(cl);nested.appendChild(g);$('ov').appendChild(nested);probe.remove();
+   const box=document.createElement('div');box.className='measureBox';box.style.cssText=`left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px`;box.onclick=()=>{document.querySelectorAll('.selected').forEach(x=>x.classList.remove('selected'));box.classList.add('selected');$('tag').textContent=`${pi+1}페이지 ${i+1}마디`;$('tag').style.display='block';$('tag').style.left=t.x+'px';$('tag').style.top=Math.max(0,t.y-24)+'px'};$('frame').appendChild(box)
+ }
+ work.remove();status(`페이지 ${pi+1}: ${srcMeasures.length}개 마디 1:1 배치 완료`,'ok');apply()
+}
+$('op').oninput=apply;$('gx').oninput=draw;$('gy').oninput=draw;$('prev').onclick=()=>{if(pi){pi--;draw()}};$('next').onclick=()=>{if(pi<DATA.length-1){pi++;draw()}};
+$('toggle').onclick=()=>{visible=!visible;$('toggle').textContent=visible?'SVG 숨김':'SVG 표시';draw()};$('auto').onclick=()=>{$('gx').value=0;$('gy').value=0;draw()};window.onresize=()=>{};apply();
+</script></body></html>
