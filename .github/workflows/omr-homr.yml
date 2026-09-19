@@ -32,7 +32,7 @@ jobs:
           echo "=== Processing ==="
           echo "$pdf"
 
-          python -m homr "$pdf"
+          python -m homr.main "$pdf"
 
           find . -type f \
             \( -name '*.musicxml' -o -name '*_teaser.png' \) \
