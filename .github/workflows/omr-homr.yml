@@ -105,6 +105,24 @@ jobs:
           echo "=== AUTO VERIFY RESULT ==="
           find output/autoverify -type f -maxdepth 1 -print
 
+      - name: Source notehead verification v2
+        run: |
+          set -e
+          mkdir -p output/autoverify-v2
+
+          for img in work/pdf/page-*.png; do
+            base=$(basename "$img" .png)
+            python omr_verify/auto_verify_v2.py \
+              "$img" \
+              "output/autoverify-v2/${base}.json"
+          done
+
+          python omr_verify/build_report.py \
+            output/autoverify-v2 \
+            output/autoverify-v2/report.json
+
+          cat output/autoverify-v2/report.json
+
       - name: Upload final result
         uses: actions/upload-artifact@v4
         with:
