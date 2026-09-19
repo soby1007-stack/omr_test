@@ -53,13 +53,9 @@ jobs:
         run: |
           set -e
           mkdir -p output/attention
-          find work/300 -maxdepth 1 -type f \( \\
-            -name '*_staff-*_output.jpg' -o \\
-            -name '*_staff-*_debug_annotated.jpg' -o \\
-            -name '*_debug_*.png' \\
-          \) -print -exec cp {} output/attention/ \;
+          find work/300 -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.png' \) -print -exec cp {} output/attention/ \;
           echo "=== Attention/debug files ==="
-          find output/attention -type f -printf '%f %k KB\\n' | sort
+          find output/attention -type f -printf '%f %k KB\n' | sort
 
       - name: Post-process and MIDI
         run: |
