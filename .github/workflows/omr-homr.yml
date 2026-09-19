@@ -1,0 +1,51 @@
+name: OMR - HOMR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  omr:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install HOMR
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "homr==0.7.0"
+
+      - name: Run OMR
+        run: |
+          mkdir -p output
+          pdf=$(find input -type f -iname '*.pdf' | head -n 1)
+          test -n "$pdf" || { echo "PDF 없음"; exit 1; }
+
+          echo "=== Processing ==="
+          echo "$pdf"
+
+          python -m homr "$pdf"
+
+          find . -type f \
+            \( -name '*.musicxml' -o -name '*_teaser.png' \) \
+            -print
+
+          find . -type f -name '*.musicxml' \
+            -not -path './output/*' \
+            -exec cp {} output/ \;
+
+          ls -lh output
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: OMR-MusicXML
+          path: output/
+          if-no-files-found: error
