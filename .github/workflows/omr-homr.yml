@@ -23,6 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "homr==0.7.0" music21 "verovio==6.3.0" pymupdf opencv-python-headless
 
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
       - name: Render PDF and detect original layout
         run: |
           set -e
