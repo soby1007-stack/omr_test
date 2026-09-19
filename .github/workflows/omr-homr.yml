@@ -142,67 +142,7 @@ print(dst)
           set -e
           mkdir -p output/comparison
 
-          python - <<'PY2'
-          from pathlib import Path
-          import json
-          import xml.etree.ElementTree as ET
-
-          def xml_notes(path):
-              try:
-                  root = ET.parse(path).getroot()
-                  notes = []
-                  for n in root.iter('note'):
-                      pitch = n.find('pitch')
-                      dur = n.find('duration')
-                      if pitch is None:
-                          continue
-                      notes.append((
-                          pitch.findtext('step'),
-                          pitch.findtext('alter'),
-                          pitch.findtext('octave'),
-                          dur.text if dur is not None else None
-                      ))
-                  return notes
-              except Exception:
-                  return []
-
-          out = Path("output/comparison")
-          report = {}
-
-          sources = {
-              "homr": sorted(Path("output/musicxml").glob("*_fixed.musicxml")),
-              "audiveris": sorted(Path("output/audiveris").glob("*.mxl")),
-              "smt": sorted(Path("output/smt").glob("*.musicxml")),
-          }
-
-          for engine, files in sources.items():
-              report[engine] = []
-              for f in files:
-                  report[engine].append({
-                      "file": str(f),
-                      "notes": len(xml_notes(f))
-                  })
-
-          (out / "engine_summary.json").write_text(
-              json.dumps(report, ensure_ascii=False, indent=2),
-              encoding="utf-8"
-          )
-
-          print(json.dumps(report, ensure_ascii=False, indent=2))
-          PY2
-
-      - name: Post-process and MIDI
-        run: |
-          set -e
-          mkdir -p output/musicxml output/midi diagnostics
-          for xml in work/300/*.musicxml; do
-            base=$(basename "$xml" .musicxml)
-            python postprocess.py \
-              "$xml" \
-              "output/musicxml/${base}_fixed.musicxml" \
-              "diagnostics/${base}.txt"
-            python -c "from music21 import converter; s=converter.parse('output/musicxml/${base}_fixed.musicxml'); s.write('midi', fp='output/midi/${base}.mid')"
-          done
+          python -c 'import json,xml.etree.ElementTree as ET; from pathlib import Path; sources={"homr":sorted(Path("output/musicxml").glob("*_fixed.musicxml")),"audiveris":sorted(Path("output/audiveris").glob("*.mxl")),"smt":sorted(Path("output/smt").glob("*.musicxml"))}; report={k:[{"file":str(f),"notes":sum(1 for n in ET.parse(f).getroot().iter("note") if n.find("pitch") is not None)} for f in v] for k,v in sources.items()}; Path("output/comparison/engine_summary.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)); print(json.dumps(report,ensure_ascii=False,indent=2))'
 
       - name: Render each MusicXML separately with Verovio
         run: |
