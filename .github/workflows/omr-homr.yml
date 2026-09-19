@@ -111,14 +111,7 @@ jobs:
 
             test -s "output/smt/${base}.krn"
 
-            python -c "
-from music21 import converter
-src='output/smt/${base}.krn'
-dst='output/smt/${base}.musicxml'
-s=converter.parse(src, format='kern')
-s.write('musicxml', fp=dst)
-print(dst)
-"
+            python -c "from music21 import converter; src='output/smt/${base}.krn'; dst='output/smt/${base}.musicxml'; s=converter.parse(src, format='kern'); s.write('musicxml', fp=dst); print(dst)"
           done
 
       - name: Post-process and MIDI
