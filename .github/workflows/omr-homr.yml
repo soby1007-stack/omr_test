@@ -92,6 +92,19 @@ jobs:
           cp work/pdf/page-*.png output/
           cp -r work/svg-source-* output/
 
+      - name: Source score auto verification
+        run: |
+          set -e
+          mkdir -p output/autoverify
+
+          for img in work/pdf/page-*.png; do
+            base=$(basename "$img" .png)
+            python omr_verify/auto_verify.py               "$img"               "output/autoverify/${base}.json"
+          done
+
+          echo "=== AUTO VERIFY RESULT ==="
+          find output/autoverify -type f -maxdepth 1 -print
+
       - name: Upload final result
         uses: actions/upload-artifact@v4
         with:
