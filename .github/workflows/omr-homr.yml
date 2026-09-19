@@ -121,57 +121,75 @@ print(dst)
 "
           done
 
+      - name: Post-process and MIDI
+        run: |
+          set -e
+          mkdir -p output/musicxml output/midi diagnostics
+
+          for xml in work/300/*.musicxml; do
+            base=$(basename "$xml" .musicxml)
+
+            python postprocess.py \
+              "$xml" \
+              "output/musicxml/${base}_fixed.musicxml" \
+              "diagnostics/${base}.txt"
+
+            python -c "from music21 import converter; s=converter.parse('output/musicxml/${base}_fixed.musicxml'); s.write('midi', fp='output/midi/${base}.mid')"
+          done
+
       - name: Compare OMR engines
         run: |
           set -e
           mkdir -p output/comparison
 
           python - <<'PY2'
-from pathlib import Path
-import json
-import xml.etree.ElementTree as ET
+          from pathlib import Path
+          import json
+          import xml.etree.ElementTree as ET
 
-def xml_notes(path):
-    try:
-        root=ET.parse(path).getroot()
-        notes=[]
-        for n in root.iter('note'):
-            pitch=n.find('pitch')
-            dur=n.find('duration')
-            if pitch is None:
-                continue
-            notes.append((
-                pitch.findtext('step'),
-                pitch.findtext('alter'),
-                pitch.findtext('octave'),
-                dur.text if dur is not None else None
-            ))
-        return notes
-    except Exception:
-        return []
+          def xml_notes(path):
+              try:
+                  root = ET.parse(path).getroot()
+                  notes = []
+                  for n in root.iter('note'):
+                      pitch = n.find('pitch')
+                      dur = n.find('duration')
+                      if pitch is None:
+                          continue
+                      notes.append((
+                          pitch.findtext('step'),
+                          pitch.findtext('alter'),
+                          pitch.findtext('octave'),
+                          dur.text if dur is not None else None
+                      ))
+                  return notes
+              except Exception:
+                  return []
 
-out=Path("output/comparison")
-report={}
+          out = Path("output/comparison")
+          report = {}
 
-for engine, files in {
-    "homr": sorted(Path("output/musicxml").glob("*_fixed.musicxml")),
-    "audiveris": sorted(Path("output/audiveris").glob("*.mxl")),
-    "smt": sorted(Path("output/smt").glob("*.musicxml")),
-}.items():
-    report[engine]=[]
-    for f in files:
-        report[engine].append({
-            "file":str(f),
-            "notes":len(xml_notes(f))
-        })
+          sources = {
+              "homr": sorted(Path("output/musicxml").glob("*_fixed.musicxml")),
+              "audiveris": sorted(Path("output/audiveris").glob("*.mxl")),
+              "smt": sorted(Path("output/smt").glob("*.musicxml")),
+          }
 
-(out/"engine_summary.json").write_text(
-    json.dumps(report,ensure_ascii=False,indent=2),
-    encoding="utf-8"
-)
+          for engine, files in sources.items():
+              report[engine] = []
+              for f in files:
+                  report[engine].append({
+                      "file": str(f),
+                      "notes": len(xml_notes(f))
+                  })
 
-print(json.dumps(report,ensure_ascii=False,indent=2))
-PY2
+          (out / "engine_summary.json").write_text(
+              json.dumps(report, ensure_ascii=False, indent=2),
+              encoding="utf-8"
+          )
+
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY2
 
       - name: Post-process and MIDI
         run: |
