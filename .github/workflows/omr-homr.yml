@@ -56,16 +56,7 @@ jobs:
               "output/${base}_fixed.musicxml" \
               "output/${base}_diagnostics.txt"
 
-            python - <<PY
-from music21 import converter
-src = "output/${base}_fixed.musicxml"
-out = "output/${base}.mid"
-
-score = converter.parse(src)
-score.write("midi", fp=out)
-
-print("MIDI:", out)
-PY
+            python -c "from music21 import converter; src='output/${base}_fixed.musicxml'; out='output/${base}.mid'; score=converter.parse(src); score.write('midi', fp=out); print('MIDI:', out)"
           done
 
           cp work/*_teaser.png output/ 2>/dev/null || true
