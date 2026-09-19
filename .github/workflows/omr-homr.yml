@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install HOMR
+      - name: Install HOMR and MIDI tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "homr==0.7.0"
+          python -m pip install "homr==0.7.0" music21
 
       - name: Render PDF to PNG
         run: |
@@ -32,13 +32,7 @@ jobs:
           pdf=$(find input -type f -iname '*.pdf' | head -n 1)
           test -n "$pdf" || { echo "PDF 없음"; exit 1; }
 
-          echo "=== PDF ==="
-          echo "$pdf"
-
           pdftoppm -png -r 300 "$pdf" work/page
-
-          echo "=== Rendered pages ==="
-          ls -lh work/
 
       - name: Run HOMR
         run: |
@@ -49,18 +43,39 @@ jobs:
             python -m homr.main "$img"
           done
 
-          echo "=== Generated MusicXML ==="
-          find work -type f -name '*.musicxml' -print
+      - name: Post-process MusicXML
+        run: |
+          set -e
+          mkdir -p output
 
-          find work -type f -name '*.musicxml' -exec cp {} output/ \;
-          find work -type f -name '*_teaser.png' -exec cp {} output/ \;
+          for xml in work/*.musicxml; do
+            base=$(basename "$xml" .musicxml)
 
-          echo "=== Output ==="
+            python postprocess.py \
+              "$xml" \
+              "output/${base}_fixed.musicxml" \
+              "output/${base}_diagnostics.txt"
+
+            python - <<PY
+from music21 import converter
+src = "output/${base}_fixed.musicxml"
+out = "output/${base}.mid"
+
+score = converter.parse(src)
+score.write("midi", fp=out)
+
+print("MIDI:", out)
+PY
+          done
+
+          cp work/*_teaser.png output/ 2>/dev/null || true
+
+          echo "=== FINAL OUTPUT ==="
           ls -lh output
 
       - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: OMR-MusicXML
+          name: OMR-Final
           path: output/
           if-no-files-found: error
