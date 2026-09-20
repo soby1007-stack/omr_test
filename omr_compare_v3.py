@@ -79,6 +79,81 @@ def collect_measures(root):
     return output
 
 
+ONSET_TOL = Fraction(1, 16)
+DUR_TOL = Fraction(1, 16)
+STEP_TO_SEMITONE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def pitch_midi(pitch):
+    step, octave, alter = pitch
+    return (octave + 1) * 12 + STEP_TO_SEMITONE.get(step, 0) + alter
+
+
+def strict_eq(a, b):
+    """Benchmark-style strict note equality: pitch + onset + duration.
+    Staff is intentionally ignored to match the public benchmark metric."""
+    _, onset_a, pitch_a, dur_a = a
+    _, onset_b, pitch_b, dur_b = b
+    return (
+        pitch_midi(pitch_a) == pitch_midi(pitch_b)
+        and abs(onset_a - onset_b) <= ONSET_TOL
+        and abs(dur_a - dur_b) <= DUR_TOL
+    )
+
+
+def lcs_match(a, b, eq):
+    """Return LCS index pairs under a custom equality predicate."""
+    if not a or not b:
+        return []
+    n, m = len(a), len(b)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            if eq(ai, b[j - 1]):
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    pairs = []
+    i, j = n, m
+    while i and j:
+        if eq(a[i - 1], b[j - 1]) and dp[i][j] == dp[i - 1][j - 1] + 1:
+            pairs.append((i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+    return pairs
+
+
+def strict_f1(homr_events, aud_events):
+    """Compute benchmark-style strict F1 for one measure.
+
+    A note matches only when pitch, onset and duration match within 1/64-note
+    (0.0625 quarter-note) tolerance. Matching uses LCS so an early mismatch does
+    not cascade into every later note. Staff/hand is deliberately excluded.
+    """
+    key = lambda e: (e[1], pitch_midi(e[2]), e[3], e[0])
+    a = sorted(list(homr_events), key=key)
+    b = sorted(list(aud_events), key=key)
+    pairs = lcs_match(a, b, strict_eq)
+    matched = len(pairs)
+    precision = matched / len(b) if b else 0.0
+    recall = matched / len(a) if a else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "strict_matches": matched,
+        "strict_precision": precision,
+        "strict_recall": recall,
+        "strict_f1": f1,
+        "strict_onset_tolerance": float(ONSET_TOL),
+        "strict_duration_tolerance": float(DUR_TOL),
+    }
+
+
 def compare(homr, aud):
     matched = homr & aud
     homr_only = homr - aud
@@ -130,6 +205,7 @@ def compare(homr, aud):
         "pitch_content_matches": pitch_content_match,
         "pitch_content_total": pitch_content_total,
         "pitch_content_rate": pitch_content_match / pitch_content_total,
+        **strict_f1(homr.elements(), aud.elements()),
         "homr_only": [[staff, str(onset), list(pitch), str(duration)] for staff, onset, pitch, duration in homr_only.elements()],
         "audiveris_only": [[staff, str(onset), list(pitch), str(duration)] for staff, onset, pitch, duration in aud_only.elements()],
         "homr_content_only": content_diff(content_homr_only),
@@ -193,9 +269,12 @@ def main(out_file):
         "mean_exact_rate": sum(r.get("exact_rate", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
         "mean_pitch_rate": sum(r.get("pitch_rate", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
         "mean_pitch_content_rate": sum(r.get("pitch_content_rate", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
+        "mean_strict_f1": sum(r.get("strict_f1", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
+        "mean_strict_precision": sum(r.get("strict_precision", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
+        "mean_strict_recall": sum(r.get("strict_recall", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
     }
     result = {
-        "method": "voice-agnostic comparison with MusicXML cursor/backup/forward timing; onset-aware and onset-independent pitch-content metrics; explicit engine-disagreement diagnostics",
+        "method": "voice-agnostic comparison with MusicXML cursor/backup/forward timing; onset-aware and onset-independent pitch-content metrics; benchmark-style strict F1 (pitch+onset+duration, 1/64 tolerance, LCS); explicit engine-disagreement diagnostics",
         "summary": summary,
         "pages": pages
     }
