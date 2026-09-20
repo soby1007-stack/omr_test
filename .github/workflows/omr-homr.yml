@@ -190,7 +190,7 @@ jobs:
       - name: Build automatic measure-level viewer
         run: |
           set -e
-          python build_overlay.py work/layout.json work output/OMR_measure_overlay_v9.html output/comparison/omr_compare_v3.json
+          python build_overlay.py work/layout.json work output/OMR_measure_overlay_v14.html output/comparison/omr_compare_v3.json output/musicxml
           cp work/layout.json output/layout.json
           cp work/pdf/page-*.png output/
           cp -r work/svg-source-* output/
