@@ -1,5 +1,5 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OMR 마디 단위 검증기 v8</title>
+<title>OMR 마디 단위 검증기 v9</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font-family:system-ui,sans-serif}
 header{position:sticky;top:0;z-index:5;background:#1b1b1b;border-bottom:1px solid #444;padding:10px}
@@ -11,17 +11,23 @@ main{padding:10px;overflow:auto}#frame{position:relative;margin:auto;background:
 #pdf{position:absolute;left:0;top:0;width:100%;height:100%}#ov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
 .measureBox{position:absolute;border:1px solid transparent;cursor:pointer}.selected{border-color:#4af!important}
 #tag{position:absolute;background:#000d;color:#fff;padding:3px 5px;border-radius:4px;font-size:11px;display:none;pointer-events:none}
-
 .measureBox.review{border-color:#ffb02055}.measureBox.close{border-color:#55aaff55}.measureBox.agree{border-color:#55dd7755}
+.measureBox.rhythm_review{border-color:#b77cff55}
+.measureBox.engine_disagreement,.measureBox.partial_engine_disagreement{border-color:#ff6b6b88}
 .measureBox.filtered{display:none}
-#info{position:fixed;right:12px;bottom:12px;max-width:360px;background:#151515ee;border:1px solid #555;border-radius:8px;padding:10px;font-size:12px;z-index:20;box-shadow:0 4px 20px #000}
+#info{position:fixed;right:12px;bottom:12px;max-width:430px;max-height:70vh;overflow:auto;background:#151515ee;border:1px solid #555;border-radius:8px;padding:10px;font-size:12px;z-index:20;box-shadow:0 4px 20px #000}
 #info b{font-size:13px}.pill{display:inline-block;padding:2px 5px;border-radius:4px;margin-left:4px;border:1px solid #555}
 #filter{background:#292929;color:#eee;border:1px solid #555;border-radius:7px;padding:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 9px;margin-top:7px}
+.diag{margin-top:7px;padding:6px;border-radius:5px;background:#222}.diff{margin-top:5px}
 </style></head><body><header>
-<h1>🎼 PDF ↔ HOMR — 마디 단위 정밀 오버레이 v8</h1>
+<h1>🎼 PDF ↔ HOMR — 마디 단위 정밀 오버레이 v9</h1>
 <div class="row"><button id="prev">◀</button><b id="page">1 / 2</b><button id="next">▶</button>
 <button id="toggle">SVG 숨김</button><button id="auto">자동정렬</button><button id="geom">Staff/Bar 기준</button>
-<select id="filter"><option value="all">전체 마디</option><option value="review">REVIEW만</option><option value="close">CLOSE 이상</option></select></div>
+<select id="filter">
+<option value="all">전체 마디</option><option value="agree">AGREE</option><option value="rhythm_review">RHYTHM REVIEW</option>
+<option value="close">CLOSE</option><option value="review">REVIEW</option><option value="engine_disagreement">ENGINE DISAGREEMENT</option>
+</select></div>
 <div class="row" style="margin-top:6px"><span class="ctrl">투명도 <input id="op" type="range" min="0" max="100" value="45"><b id="opv">45%</b></span>
 <span class="ctrl">전체 X <input id="gx" type="range" min="-100" max="100" value="0"><b id="gxv">0</b></span>
 <span class="ctrl">전체 Y <input id="gy" type="range" min="-100" max="100" value="0"><b id="gyv">0</b></span></div>
@@ -34,7 +40,10 @@ main{padding:10px;overflow:auto}#frame{position:relative;margin:auto;background:
 let pi=0,visible=true;const $=x=>document.getElementById(x);const FILTER=$('filter');
 function status(t,c=''){$('status').textContent=t;$('status').className=c}
 function parse(s){return new DOMParser().parseFromString(s,'image/svg+xml').documentElement}
-function apply(){ $('opv').textContent=$('op').value+'%';$('gxv').textContent=$('gx').value;$('gyv').textContent=$('gy').value;$('ov').style.opacity=$('op').value/100}
+function pct(v){return v==null?'-':(v*100).toFixed(1)+'%'}
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function listDiff(title,a){if(!a||!a.length)return '';return `<div class="diff"><b>${title}</b><br>${a.map(esc).join('<br>')}</div>`}
+function apply(){$('opv').textContent=$('op').value+'%';$('gxv').textContent=$('gx').value;$('gyv').textContent=$('gy').value;$('ov').style.opacity=$('op').value/100}
 function draw(){
  const P=DATA[pi];$('page').textContent=(pi+1)+' / '+DATA.length;$('pdf').src=P.image;
  $('frame').style.width=P.w+'px';$('frame').style.height=P.h+'px';$('ov').innerHTML='';
@@ -50,52 +59,60 @@ function draw(){
    const sw=parseFloat(src.getAttribute('width'))||840,sh=parseFloat(src.getAttribute('height'))||1030;
    probe.setAttribute('width',sw);probe.setAttribute('height',sh);probe.setAttribute('viewBox',`0 0 ${sw} ${sh}`);
    const defs=src.querySelector('defs');if(defs)probe.appendChild(defs.cloneNode(true));probe.appendChild(m.cloneNode(true));work.appendChild(probe);
-   // v8: note/content bounding box가 아니라 실제 악보의 staff line + barline을 기준으로
-   // 마디의 기하를 맞춘다. 이렇게 해야 음표가 마디 안에서 세로로 찌그러지는 문제가 줄어든다.
    const staffPaths=Array.from(m.querySelectorAll('.staff > path'));
    const staffBoxes=staffPaths.map(x=>x.getBBox()).filter(b=>b.width>0);
    const barPaths=Array.from(m.querySelectorAll('.barLine path')).map(x=>x.getBBox());
-   let gx0, gx1, gy0, gy1;
-   if(staffBoxes.length){
-     gx0=Math.min(...staffBoxes.map(b=>b.x));
-     gx1=Math.max(...staffBoxes.map(b=>b.x+b.width));
-     gy0=Math.min(...staffBoxes.map(b=>b.y));
-     gy1=Math.max(...staffBoxes.map(b=>b.y+b.height));
-   } else {
-     const b=probe.lastElementChild.getBBox(); gx0=b.x; gx1=b.x+b.width; gy0=b.y; gy1=b.y+b.height;
-   }
-   // 마지막 barline은 staff 끝과 약간 다를 수 있으므로 x 오른쪽 경계에만 사용한다.
-   if(barPaths.length){
-     const bx=Math.max(...barPaths.map(b=>b.x+b.width));
-     if(Number.isFinite(bx) && bx>gx0) gx1=bx;
-   }
-   const sx=t.w/Math.max(1e-9,gx1-gx0), sy=t.h/Math.max(1e-9,gy1-gy0);
+   let gx0,gx1,gy0,gy1;
+   if(staffBoxes.length){gx0=Math.min(...staffBoxes.map(b=>b.x));gx1=Math.max(...staffBoxes.map(b=>b.x+b.width));gy0=Math.min(...staffBoxes.map(b=>b.y));gy1=Math.max(...staffBoxes.map(b=>b.y+b.height))}
+   else{const b=probe.lastElementChild.getBBox();gx0=b.x;gx1=b.x+b.width;gy0=b.y;gy1=b.y+b.height}
+   if(barPaths.length){const bx=Math.max(...barPaths.map(b=>b.x+b.width));if(Number.isFinite(bx)&&bx>gx0)gx1=bx}
+   const sx=t.w/Math.max(1e-9,gx1-gx0),sy=t.h/Math.max(1e-9,gy1-gy0);
    const nested=document.createElementNS('http://www.w3.org/2000/svg','svg');
    nested.setAttribute('x',0);nested.setAttribute('y',0);nested.setAttribute('width',P.w);nested.setAttribute('height',P.h);nested.setAttribute('viewBox',`0 0 ${P.w} ${P.h}`);
    if(defs)nested.appendChild(defs.cloneNode(true));
    const g=document.createElementNS('http://www.w3.org/2000/svg','g'),cl=m.cloneNode(true);
    cl.setAttribute('transform',`translate(${t.x-gx0*sx+Number($('gx').value)},${t.y-gy0*sy+Number($('gy').value)}) scale(${sx},${sy})`);
    g.appendChild(cl);nested.appendChild(g);$('ov').appendChild(nested);probe.remove();
-   const key=`${pi+1}-${i+1}`,c=CMP[key]||{};
-const cls=(c.status||'').toLowerCase();
-const box=document.createElement('div');box.className=`measureBox ${cls}`;box.dataset.status=c.status||'';
-box.style.cssText=`left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px`;
-box.title=`${i+1}마디 · ${c.status||'N/A'} · pitch ${c.pitch!=null?(c.pitch*100).toFixed(1):'-'}%`;
-box.onclick=()=>{
- document.querySelectorAll('.selected').forEach(x=>x.classList.remove('selected'));box.classList.add('selected');
- const color=c.status==='AGREE'?'#55dd77':c.status==='CLOSE'?'#55aaff':'#ffb020';
- $('info').innerHTML=`<b>${pi+1}페이지 ${i+1}마디</b> <span class="pill" style="border-color:${color};color:${color}">${c.status||'N/A'}</span><br>
- pitch 일치율: <b>${c.pitch!=null?(c.pitch*100).toFixed(1):'-'}%</b> · exact: <b>${c.exact!=null?(c.exact*100).toFixed(1):'-'}%</b><br>
- HOMR ${c.homr_notes??'-'}음 / Audiveris ${c.audiveris_notes??'-'}음`;
-};
-$('frame').appendChild(box)
+   const key=`${pi+1}-${i+1}`,c=CMP[key]||{},cls=(c.status||'').toLowerCase();
+   const box=document.createElement('div');box.className=`measureBox ${cls} ${c.diagnosis||''}`;box.dataset.status=c.status||'';box.dataset.diagnosis=c.diagnosis||'';
+   box.style.cssText=`left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px`;
+   box.title=`${i+1}마디 · ${c.status||'N/A'} · ${c.diagnosis||''} · strict F1 ${pct(c.strict_f1)}`;
+   box.onclick=()=>{
+     document.querySelectorAll('.selected').forEach(x=>x.classList.remove('selected'));box.classList.add('selected');
+     const color=c.status==='AGREE'?'#55dd77':c.status==='CLOSE'?'#55aaff':c.diagnosis&&c.diagnosis.includes('DISAGREEMENT')?'#ff6b6b':'#ffb020';
+     $('info').innerHTML=`<b>${pi+1}페이지 ${i+1}마디</b> <span class="pill" style="border-color:${color};color:${color}">${esc(c.status||'N/A')}</span>
+     <div class="diag">진단: <b>${esc(c.diagnosis||'N/A')}</b></div>
+     <div class="kv">
+       <span>Exact</span><b>${pct(c.exact)}</b><span>Pitch</span><b>${pct(c.pitch)}</b>
+       <span>Pitch-content</span><b>${pct(c.pitch_content)}</b>
+       <span>Strict F1</span><b>${pct(c.strict_f1)}</b>
+       <span>Precision</span><b>${pct(c.strict_precision)}</b><span>Recall</span><b>${pct(c.strict_recall)}</b>
+       <span>HOMR / Audiveris</span><b>${c.homr_notes??'-'} / ${c.audiveris_notes??'-'}음</b>
+     </div>
+     ${listDiff('HOMR만 존재',c.homr_content_only?.length?c.homr_content_only:c.homr_only)}
+     ${listDiff('Audiveris만 존재',c.audiveris_content_only?.length?c.audiveris_content_only:c.audiveris_only)}
+     <div style="margin-top:6px;color:#aaa">Strict tolerance: onset ${c.strict_onset_tolerance??'-'} · duration ${c.strict_duration_tolerance??'-'} quarter-note</div>`;
+   };
+   $('frame').appendChild(box)
  }
- work.remove();status(`페이지 ${pi+1}: ${srcMeasures.length}개 마디 · Staff/Bar 기준 정밀 배치 완료`,'ok');apply()
+ work.remove();status(`페이지 ${pi+1}: ${srcMeasures.length}개 마디 · v9 진단 오버레이 완료`,'ok');apply();applyFilter()
 }
-FILTER.onchange=()=>{document.querySelectorAll('.measureBox').forEach(b=>{
- const f=FILTER.value,s=b.dataset.status||'';
- b.classList.toggle('filtered',f==='review'?s!=='REVIEW':f==='close'?(s==='REVIEW'):false);
-});};
-$('op').oninput=apply;$('gx').oninput=draw;$('gy').oninput=draw;$('prev').onclick=()=>{if(pi){pi--;draw()}};$('next').onclick=()=>{if(pi<DATA.length-1){pi++;draw()}};
-$('toggle').onclick=()=>{visible=!visible;$('toggle').textContent=visible?'SVG 숨김':'SVG 표시';draw()};$('auto').onclick=()=>{$('gx').value=0;$('gy').value=0;draw()};$('geom').onclick=()=>{alert('v8 기하 보정 기준: 각 마디의 staff line 범위 + 마지막 barline을 PDF 마디 박스에 대응합니다.');};window.onresize=()=>{};apply();draw();
+function applyFilter(){
+ document.querySelectorAll('.measureBox').forEach(b=>{
+   const f=FILTER.value,s=b.dataset.status||'',d=b.dataset.diagnosis||'';
+   let hide=false;
+   if(f==='agree')hide=s!=='AGREE';
+   else if(f==='rhythm_review')hide=s!=='RHYTHM_REVIEW';
+   else if(f==='close')hide=s!=='CLOSE';
+   else if(f==='review')hide=s!=='REVIEW';
+   else if(f==='engine_disagreement')hide=!d.includes('ENGINE_DISAGREEMENT');
+   b.classList.toggle('filtered',hide);
+ })
+}
+FILTER.onchange=applyFilter;$('op').oninput=apply;$('gx').oninput=draw;$('gy').oninput=draw;
+$('prev').onclick=()=>{if(pi){pi--;draw()}};$('next').onclick=()=>{if(pi<DATA.length-1){pi++;draw()}};
+$('toggle').onclick=()=>{visible=!visible;$('toggle').textContent=visible?'SVG 숨김':'SVG 표시';draw()};
+$('auto').onclick=()=>{$('gx').value=0;$('gy').value=0;draw()};
+$('geom').onclick=()=>alert('v9 기하 보정 기준: 각 마디의 staff line 범위 + 마지막 barline을 PDF 마디 박스에 대응합니다.');
+window.onresize=()=>{};apply();draw();
 </script></body></html>
