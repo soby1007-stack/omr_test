@@ -100,6 +100,25 @@ def compare(homr, aud):
     pitch_content_match = sum((pitch_content_h & pitch_content_a).values())
     pitch_content_total = max(sum(pitch_content_h.values()), sum(pitch_content_a.values()), 1)
 
+    # onset을 무시한 pitch 내용 차이를 명시적으로 기록한다.
+    # 이 정보는 "HOMR이 틀렸다"가 아니라 "두 OMR 엔진이 다르다"는
+    # 사실을 진단하기 위한 것이다. 어느 쪽이 원본과 맞는지는 PDF 확인이 필요하다.
+    content_homr_only = pitch_content_h - pitch_content_a
+    content_aud_only = pitch_content_a - pitch_content_h
+
+    def content_diff(counter):
+        return [
+            {
+                "staff": staff,
+                "pitch": list(pitch),
+                "count": count
+            }
+            for (staff, pitch), count in sorted(
+                counter.items(),
+                key=lambda x: (str(x[0][0]), str(x[0][1]))
+            )
+        ]
+
     return {
         "homr_notes": h_count,
         "audiveris_notes": a_count,
@@ -112,7 +131,10 @@ def compare(homr, aud):
         "pitch_content_total": pitch_content_total,
         "pitch_content_rate": pitch_content_match / pitch_content_total,
         "homr_only": [[staff, str(onset), list(pitch), str(duration)] for staff, onset, pitch, duration in homr_only.elements()],
-        "audiveris_only": [[staff, str(onset), list(pitch), str(duration)] for staff, onset, pitch, duration in aud_only.elements()]
+        "audiveris_only": [[staff, str(onset), list(pitch), str(duration)] for staff, onset, pitch, duration in aud_only.elements()],
+        "homr_content_only": content_diff(content_homr_only),
+        "audiveris_content_only": content_diff(content_aud_only),
+        "content_difference_count": sum(content_homr_only.values()) + sum(content_aud_only.values())
     }
 
 
@@ -131,18 +153,34 @@ def main(out_file):
         for i, homr_measure in enumerate(homr_pages[page - 1]):
             aud_index = (page - 1) * 24 + i
             if aud_index >= len(aud_measures):
-                rows.append({"measure": i + 1, "status": "REVIEW", "reason": "Audiveris measure missing"})
+                rows.append({
+                    "measure": i + 1,
+                    "status": "REVIEW",
+                    "diagnosis": "AUDIVERIS_MEASURE_MISSING",
+                    "reason": "Audiveris measure missing"
+                })
                 continue
             c = compare(homr_measure, aud_measures[aud_index])
             if c["exact_rate"] >= 0.95:
                 status = "AGREE"
+                diagnosis = "MATCH"
             elif c["pitch_content_rate"] >= 0.95:
                 status = "RHYTHM_REVIEW"
+                diagnosis = "TIMING_DIFFERENCE"
             elif c["pitch_content_rate"] >= 0.80:
                 status = "CLOSE"
+                diagnosis = "PARTIAL_ENGINE_DISAGREEMENT"
             else:
                 status = "REVIEW"
-            rows.append({"measure": i + 1, "audiveris_measure": aud_index + 1, "status": status, **c})
+                diagnosis = "ENGINE_DISAGREEMENT"
+
+            rows.append({
+                "measure": i + 1,
+                "audiveris_measure": aud_index + 1,
+                "status": status,
+                "diagnosis": diagnosis,
+                **c
+            })
         pages.append({"page": page, "measures": rows})
 
     all_rows = [r for page in pages for r in page["measures"]]
@@ -156,7 +194,11 @@ def main(out_file):
         "mean_pitch_rate": sum(r.get("pitch_rate", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
         "mean_pitch_content_rate": sum(r.get("pitch_content_rate", 0) for r in all_rows) / len(all_rows) if all_rows else 0,
     }
-    result = {"method": "voice-agnostic comparison with MusicXML cursor/backup/forward timing; onset-aware and onset-independent pitch-content metrics", "summary": summary, "pages": pages}
+    result = {
+        "method": "voice-agnostic comparison with MusicXML cursor/backup/forward timing; onset-aware and onset-independent pitch-content metrics; explicit engine-disagreement diagnostics",
+        "summary": summary,
+        "pages": pages
+    }
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
     Path(out_file).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
