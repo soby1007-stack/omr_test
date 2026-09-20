@@ -159,6 +159,13 @@ jobs:
           python omr_compare.py output/comparison/omr_compare.json
           cat output/comparison/omr_compare.json
 
+      - name: Compare HOMR and Audiveris (voice agnostic)
+        run: |
+          set -e
+          mkdir -p output/comparison
+          python omr_compare_v2.py output/comparison/omr_compare_v2.json
+          cat output/comparison/omr_compare_v2.json
+
       - name: Render each MusicXML separately with Verovio
         run: |
           set -e
