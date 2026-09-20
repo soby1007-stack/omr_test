@@ -110,7 +110,7 @@ for page in raw.get('pages',[]):
         if pn is None or mn is None: continue
         cmp[f'{pn}-{mn}']={'status':m.get('status'),'diagnosis':m.get('diagnosis'),'exact':m.get('exact_rate'),'pitch':m.get('pitch_rate'),'pitch_content':m.get('pitch_content_rate'),'homr_notes':m.get('homr_notes'),'audiveris_notes':m.get('audiveris_notes'),'strict_matches':m.get('strict_matches'),'strict_precision':m.get('strict_precision'),'strict_recall':m.get('strict_recall'),'strict_f1':m.get('strict_f1'),'strict_onset_tolerance':m.get('strict_onset_tolerance'),'strict_duration_tolerance':m.get('strict_duration_tolerance'),'homr_only':m.get('homr_only',[]),'audiveris_only':m.get('audiveris_only',[]),'homr_content_only':m.get('homr_content_only',[]),'audiveris_content_only':m.get('audiveris_content_only',[]),'content_difference_count':m.get('content_difference_count',0)}
 
-html=(Path(__file__).with_name('viewer_direct.html')).read_text(encoding='utf-8')
+html=(Path(__file__).with_name('viewer_template.html')).read_text(encoding='utf-8')
 html=html.replace('/*__DATA__*/','const DATA='+json.dumps(pages,ensure_ascii=False,separators=(',',':'))+';')
 html=html.replace('/*__CMP__*/','const CMP='+json.dumps(cmp,ensure_ascii=False,separators=(',',':'))+';')
 out.write_text(html,encoding='utf-8')
