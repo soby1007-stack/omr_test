@@ -51,43 +51,73 @@ def get_divisions(measure, current):
 
 def measure_events(measure, initial_divisions):
     """
-    XML 내부 duration/onset을 quarterLength로 정규화.
-    voice 번호는 비교에서 제거한다.
-    staff는 유지한다.
+    MusicXML duration/onset을 quarterLength로 정규화한다.
+
+    중요:
+    MusicXML은 여러 voice를 같은 measure 안에 순차적으로 기록하고
+    <backup>/<forward>로 시간 커서를 이동한다. 기존 구현은 voice별
+    position만 추적하고 backup/forward를 무시해, voice 번호가 다른
+    음표를 실제보다 measure 시작점으로 이동시키는 문제가 있었다.
+
+    여기서는 XML의 실제 커서를 따라가며 onset을 계산한다.
+    voice 번호는 비교에서 제거하고 staff만 유지한다.
     """
     divisions = get_divisions(measure, initial_divisions)
 
-    positions = defaultdict(Fraction)
+    cursor = Fraction(0)
+    last_onset_by_staff = {}
     result = []
 
-    for note in measure.findall("note"):
-        staff = note.findtext("staff") or "1"
-        voice = note.findtext("voice") or "1"
+    for item in measure:
+        if item.tag == "note":
+            staff = item.findtext("staff") or "1"
 
-        raw_duration = Fraction(note.findtext("duration") or "0")
-        duration = raw_duration / divisions
-
-        key = (staff, voice)
-
-        if note.find("chord") is not None:
-            onset = positions[key] - duration
-        else:
-            onset = positions[key]
-
-        p = get_pitch(note)
-
-        if p is not None:
-            result.append(
-                (
-                    staff,
-                    onset,
-                    p,
-                    duration
-                )
+            raw_duration = Fraction(
+                item.findtext("duration") or "0"
             )
+            duration = raw_duration / divisions
 
-        if note.find("grace") is None and note.find("chord") is None:
-            positions[key] += duration
+            is_chord = item.find("chord") is not None
+
+            if is_chord:
+                onset = last_onset_by_staff.get(
+                    staff,
+                    cursor
+                )
+            else:
+                onset = cursor
+
+            pitch = get_pitch(item)
+
+            if pitch is not None:
+                result.append(
+                    (
+                        staff,
+                        onset,
+                        pitch,
+                        duration
+                    )
+                )
+
+            # grace/chord는 시간 커서를 전진시키지 않는다.
+            if (
+                item.find("grace") is None
+                and not is_chord
+            ):
+                cursor += duration
+                last_onset_by_staff[staff] = onset
+
+        elif item.tag == "backup":
+            raw_duration = Fraction(
+                item.findtext("duration") or "0"
+            )
+            cursor -= raw_duration / divisions
+
+        elif item.tag == "forward":
+            raw_duration = Fraction(
+                item.findtext("duration") or "0"
+            )
+            cursor += raw_duration / divisions
 
     return Counter(result), divisions
 
@@ -269,7 +299,7 @@ def main(out_file):
     }
 
     result = {
-        "method": "voice-agnostic comparison with MusicXML divisions normalized to quarterLength",
+        "method": "voice-agnostic comparison with MusicXML cursor/backup/forward timing and divisions normalized to quarterLength",
         "summary": summary,
         "pages": pages
     }
