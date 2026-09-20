@@ -1,4 +1,4 @@
-import sys, json, base64, re
+import sys, json, base64
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import cv2, numpy as np
@@ -7,7 +7,8 @@ layout = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 work = Path(sys.argv[2]); out=Path(sys.argv[3]); cmp_path=Path(sys.argv[4]); music_dir=Path(sys.argv[5])
 
 STEP_INDEX={s:i for i,s in enumerate('CDEFGAB')}
-CLEF_LINE1={('G',2):('F',4), ('F',4):('D',3), ('C',3):('E',4), ('C',4):('F',4)}
+# MusicXML clef semantics: G2 = G4, F4 = F3, C3 = C4, C4 = C3.
+CLEF_LINE1={('G',2):('G',4), ('F',4):('F',3), ('C',3):('C',4), ('C',4):('C',3)}
 
 def b64(p): return base64.b64encode(Path(p).read_bytes()).decode()
 
@@ -25,24 +26,23 @@ def detect_staff_lines(img_path, t):
         if not lines or yy-lines[-1][-1]>2: lines.append([int(yy)])
         else: lines[-1].append(int(yy))
     centers=[float(sum(g)/len(g))+y for g in lines]
-    # pair into 5-line staffs; a large vertical gap separates staffs
     staffs=[]
     for c in centers:
         if not staffs or c-staffs[-1][-1]>25: staffs.append([c])
         else: staffs[-1].append(c)
-    staffs=[s for s in staffs if len(s)>=5]
-    return [s[:5] for s in staffs[:2]]
+    return [s[:5] for s in staffs[:2] if len(s)>=5]
 
 def parse_measure_events(m, state):
-    div=state.get('divisions',12); clefs=state.get('clefs',{1:('G',2),2:('F',4)})
+    div=state.get('divisions',12); clefs=dict(state.get('clefs',{1:('G',2),2:('F',4)}))
     cur=0.0; last={}; events=[]; maxpos=0.0
     for child in m:
         tag=child.tag.split('}')[-1]
         if tag=='attributes':
             z=child.find('divisions')
-            if z is not None: div=int(z.text)
+            if z is not None: div=int(z.text); state['divisions']=div
             for c in child.findall('clef'):
                 n=int(c.get('number','1')); clefs[n]=(c.findtext('sign','G'),int(c.findtext('line','2')))
+            state['clefs']=dict(clefs)
         elif tag=='backup': cur-=float(child.findtext('duration','0'))/div
         elif tag=='forward': cur+=float(child.findtext('duration','0'))/div; maxpos=max(maxpos,cur)
         elif tag=='note':
@@ -59,47 +59,43 @@ def parse_measure_events(m, state):
 def pitch_y(event, staff_lines, clef):
     if event['staff']<1 or event['staff']>len(staff_lines): return None
     sign,line=clef
-    line_step,line_oct=CLEF_LINE1.get((sign,line),('F',4))
-    base= line_oct*7+STEP_INDEX[line_step]
+    line_step,line_oct=CLEF_LINE1.get((sign,line),('F',3))
+    base=line_oct*7+STEP_INDEX[line_step]
     idx=event['octave']*7+STEP_INDEX[event['step']]
     steps=idx-base
     lines=staff_lines[event['staff']-1]
     spacing=sum(lines[i+1]-lines[i] for i in range(4))/4
     return lines[4] - steps*(spacing/2)
 
-# Parse XML per page, preserving clefs across measures.
 xml_pages=[]
 for pi,p in enumerate(layout['pages'],1):
     xml=music_dir/f'page-{pi}_fixed.musicxml'
     root=ET.parse(xml).getroot(); measures=list(root.findall('.//measure'))
     state={'divisions':12,'clefs':{1:('G',2),2:('F',4)}}; parsed=[]
     for m in measures:
-        ev,dur,clefs=parse_measure_events(m,state); state['clefs']=clefs
-        parsed.append({'events':ev,'duration':dur})
+        ev,dur,clefs=parse_measure_events(m,state)
+        parsed.append({'events':ev,'duration':dur,'clefs':dict(clefs)})
     xml_pages.append(parsed)
 
 pages=[]
 for pi,p in enumerate(layout['pages'],1):
     img=work/'pdf'/f'page-{pi}.png'
-    # 144dpi image is the coordinate basis of layout.json
     measures=[]
     for mi,t in enumerate(p['measures']):
         staffs=detect_staff_lines(img,t)
-        events=xml_pages[pi-1][mi]['events'] if mi<len(xml_pages[pi-1]) else []
-        duration=xml_pages[pi-1][mi]['duration'] if mi<len(xml_pages[pi-1]) else 4.0
-        clefs={1:('G',2),2:('F',4)}
-        # re-read clefs from event parser is not retained; defaults match this score
+        parsed=xml_pages[pi-1][mi] if mi<len(xml_pages[pi-1]) else {'events':[],'duration':4.0,'clefs':{}}
+        events=parsed['events']; duration=parsed['duration']; clefs=parsed['clefs']
         notes=[]
+        # X is a musical-time projection into the original measure box. Y is calculated from
+        # the original PDF staff spacing and the MusicXML clef/pitch; no source notehead snapping.
+        lead_in=78 if t.get('measure_in_system',1)==1 else 5
+        usable=max(1,t['w']-lead_in-5)
         for e in events:
-            if e['staff']>len(staffs): continue
-            y=pitch_y(e,staffs,(('G',2) if e['staff']==1 else ('F',4)))
+            y=pitch_y(e,staffs,clefs.get(e['staff'],('G',2) if e['staff']==1 else ('F',4)))
             if y is None: continue
-            # X based on musical onset within this measure, not rendered SVG geometry.
-            lead_in = 78 if t.get('measure_in_system', 1) == 1 else 5
-            usable=max(1,t['w']-lead_in-5)
-            x=t['x'] + lead_in + min(1.0,max(0.0,e['onset']/duration)) * usable
+            x=t['x'] + lead_in + min(1.0,max(0.0,e['onset']/duration))*usable
             notes.append({'x':x,'y':y,'staff':e['staff'],'onset':e['onset'],'duration':e['duration'],'step':e['step'],'octave':e['octave'],'alter':e['alter']})
-        measures.append({**t,'notes':notes})
+        measures.append({**t,'notes':notes,'staff_lines':staffs})
     pages.append({'image':'data:image/png;base64,'+b64(img),'measures':measures,'w':p['width'],'h':p['height']})
 
 raw=json.loads(cmp_path.read_text(encoding='utf-8')); cmp={}
